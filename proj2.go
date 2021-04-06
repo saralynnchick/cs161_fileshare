@@ -78,23 +78,68 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 
 // User is the structure definition for a user record.
 type User struct {
-	Username string
+	Username          string
+	UUID              uuid.UUID
+	UnhashedStoredKey []byte
+	Password          string
+	RSAPubKey         userlib.PKEEncKey
+	RSAPrivKey        userlib.PKEDecKey
+	HMAC              []byte
+	Signature         userlib.PrivateKeyType
+	Files             map[string]FileMapVals
 
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
 }
 
+type FileMapVals struct {
+	// fileLocation
+	// Key to reaad file
+
+}
+
 // InitUser will be called a single time to initialize a new user.
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
-	userdataptr = &userdata
+	// userdataptr = &userdata
 
 	//TODO: This is a toy implementation.
 	userdata.Username = username
+	unhashedStoredKey := userlib.Argon2Key([]byte(username), []byte(password), uint32(userlib.HashSizeBytes))
+	userdata.UnhashedStoredKey = unhashedStoredKey
+	userdata.Password = password
+	pubKey, privKey, err := userlib.PKEKeyGen()
+	userdata.RSAPrivKey = privKey
+	userdata.RSAPubKey = pubKey
+	userdata.Files = make(map[string]FileMapVals)
+	// userdata.HMAC, _ = userlib.HMACEval([]byte(username), []byte(password))
+	id := uuid.New()
+	userdata.UUID = id
+	//AESKey := userlib.Argon2Key(unhashedStoredKey, []byte(username), uint32(userlib.AESKeySizeBytes))
+	// hashedStoredKey := id.FromBytes([]byte(filename + userdata.Username)[:16])
+	//datastoredKey := string(userlib.Argon2Key([]byte(username), []byte(password), uint32(userlib.AESKeySizeBytes)))
+	// datastoredKey := string(hashedStoredKey)
+	marshaledData, err := json.Marshal(userdata)
+	if err != nil {
+		return nil, errors.New("Init User Struct: marshal userdata error") //keep on trucking through
+	}
+
+	sig, verify, err := userlib.DSKeyGen()
+	// userdata.Signature = sig
+	if err != nil {
+		return nil, errors.New("Init User Struct: datastore error") //keep on trucking through
+	}
+	userdata.Signature = sig
+
+	userlib.KeystoreSet(username+"rsa", pubKey)
+	userlib.KeystoreSet(username+"sig_ver", verify)
+	userlib.DatastoreSet(id, marshaledData)
+
 	//End of toy implementation
 
 	return &userdata, nil
+
 }
 
 // GetUser is documented at:
