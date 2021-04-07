@@ -87,7 +87,7 @@ type User struct {
 	HMAC              []byte
 	Signature         userlib.PrivateKeyType
 	Files             map[string]FileMapVals
-
+		//update 1
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
