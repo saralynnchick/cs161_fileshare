@@ -94,9 +94,9 @@ type User struct {
 }
 
 type FileMapVals struct {
-	// fileLocation
-	// Key to reaad file
-
+	fileKey []
+	AESKey []byte
+	HMAC []byte		//lets see if these fix the bug for AES and HMAC key creation
 }
 
 // InitUser will be called a single time to initialize a new user.
@@ -148,6 +148,19 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdataptr = &userdata
 
+    	pubKey, ok := userlib.KeystoreGet(username) 
+    	if !ok{
+        	return nil, errors.New("GetUser ERROR, public key is non-existent")
+    	}
+    	unhashedStoredKey := userlib.Argon2Key([]byte(password), []byte(username), uint32(userlib.HashSizeBytes))
+    	AESKey := userlib.Argon2Key(unhashedStoredKey, []byte(password), uint32(userlib.AESKeySizeBytes))
+    	// encrypt this one with 512 hashedStoredKey := 
+    	// encrypt this one with 512 datastoredKey := string(hashedStoreKey)
+   	datastoredVal, ok := userlib.DatastoreGet(datastoredKey)
+    	if !ok {
+        	return nil, errors.New("GetUser ERROR, database is non-existent")
+    	}
+	
 	return userdataptr, nil
 }
 
