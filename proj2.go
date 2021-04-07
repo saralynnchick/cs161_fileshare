@@ -160,6 +160,19 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
     	if !ok {
         	return nil, errors.New("GetUser ERROR, database is non-existent")
     	}
+	//still have to fix these next few lines
+	var sinData sinEncData
+   	err = json.Unmarshal(datastoredVal, &sinData)
+    	if err != nil{
+        	return nil, errors.New("GetUser: unmarshal storedData unable to verify")
+    	}
+
+    	err = userlib.dsVerify(&pubKey, sinData.Enc)
+    	if err != nil{
+        	return nil, errors.New("GetUser: unmarshal storedData unable to verify")
+    	}
+	//gotta fix lines above this
+	
 	
 	return userdataptr, nil
 }
