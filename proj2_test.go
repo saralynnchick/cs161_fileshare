@@ -43,6 +43,27 @@ func TestInit(t *testing.T) {
 	// You probably want many more tests here.
 }
 
+func TestGetUser(t *testing.T) {
+	clear()
+	userlib.SetDebugStatus(true)
+	// normal init and get
+	alice, err := InitUser("alice", "password")
+	if err != nil {
+		t.Error("User init failed", err)
+		return
+	}
+	alice2, err := GetUser("alice", "password")
+	if err != nil {
+		t.Error("User get failed", err)
+		return
+	}
+	t.Log("user2", alice2)
+	t.Log("1", alice)
+	if !reflect.DeepEqual(alice, alice2) {
+		t.Error("users not the same", alice, alice2)
+		return
+	}
+}
 func TestStorage(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")

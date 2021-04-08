@@ -87,17 +87,30 @@ type User struct {
 	HMAC              []byte
 	Signature         userlib.PrivateKeyType
 	Files             map[string]FileMapVals
-		//update 1
+	//update 1
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
 }
 
 type FileMapVals struct {
-	fileKey []
-	AESKey []byte
-	HMAC []byte		//lets see if these fix the bug for AES and HMAC key creation
+	fileKey []byte
+	AESKey  []byte
+	HMAC    []byte //lets see if these fix the bug for AES and HMAC key creation
 }
+
+//FIXME
+//TODO
+/* We need to marshal the data, then we need to encrypt it with symmetric key, so AES.
+We then need to create some hmac/signature based off AES and append it to AES
+We upload this to the data store. This represents signed, encrypted data.
+Also in data store upload salted password for each username.
+In get user we will check to see if user exists based on if the password they give matches
+salted password we have in store for that user.
+To retrieve their data, split the datastore value into the signature and AES encrypted stuff.
+Check to see if signature matches the result of signing the AES part. If so data valid.
+Decrypt AES, and unmarshal.
+*/
 
 // InitUser will be called a single time to initialize a new user.
 func InitUser(username string, password string) (userdataptr *User, err error) {
@@ -120,7 +133,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// hashedStoredKey := id.FromBytes([]byte(filename + userdata.Username)[:16])
 	//datastoredKey := string(userlib.Argon2Key([]byte(username), []byte(password), uint32(userlib.AESKeySizeBytes)))
 	// datastoredKey := string(hashedStoredKey)
-	marshaledData, err := json.Marshal(userdata)
+
 	if err != nil {
 		return nil, errors.New("Init User Struct: marshal userdata error") //keep on trucking through
 	}
@@ -131,10 +144,11 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return nil, errors.New("Init User Struct: datastore error") //keep on trucking through
 	}
 	userdata.Signature = sig
-
+	marshaledData, err := json.Marshal(userdata)
 	userlib.KeystoreSet(username+"rsa", pubKey)
+	userlib.KeystoreSet(username, userdata.RSAPubKey)
 	userlib.KeystoreSet(username+"sig_ver", verify)
-	userlib.DatastoreSet(id, marshaledData)
+	userlib.DatastoreSet(bytesToUUID(unhashedStoredKey), marshaledData)
 
 	//End of toy implementation
 
@@ -148,32 +162,34 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdataptr = &userdata
 
-    	pubKey, ok := userlib.KeystoreGet(username) 
-    	if !ok{
-        	return nil, errors.New("GetUser ERROR, public key is non-existent")
-    	}
-    	unhashedStoredKey := userlib.Argon2Key([]byte(password), []byte(username), uint32(userlib.HashSizeBytes))
-    	AESKey := userlib.Argon2Key(unhashedStoredKey, []byte(password), uint32(userlib.AESKeySizeBytes))
-    	// encrypt this one with 512 hashedStoredKey := 
-    	// encrypt this one with 512 datastoredKey := string(hashedStoreKey)
-   	datastoredVal, ok := userlib.DatastoreGet(datastoredKey)
-    	if !ok {
-        	return nil, errors.New("GetUser ERROR, database is non-existent")
-    	}
+	_, ok := userlib.KeystoreGet(username)
+	if !ok {
+		return nil, errors.New("GetUser ERROR, public key is non-existent")
+	}
+	unhashedStoredKey := userlib.Argon2Key([]byte(username), []byte(password), uint32(userlib.HashSizeBytes))
+	// AESKey := userlib.Argon2Key(unhashedStoredKey, []byte(password), uint32(userlib.AESKeySizeBytes))
+	// encrypt this one with 512 hashedStoredKey :=
+	// encrypt this one with 512 datastoredKey := string(hashedStoreKey)
+	marshaledData, ok := userlib.DatastoreGet(bytesToUUID(unhashedStoredKey))
+	if !ok {
+		return nil, errors.New("GetUser ERROR, database is non-existent")
+	}
 	//still have to fix these next few lines
-	var sinData sinEncData
-   	err = json.Unmarshal(datastoredVal, &sinData)
-    	if err != nil{
-        	return nil, errors.New("GetUser: unmarshal storedData unable to verify")
-    	}
+	// var sinData sinEncData
+	err = json.Unmarshal(marshaledData, userdataptr)
+	if err != nil {
+		return nil, errors.New("GetUser: unmarshal storedData unable to verify")
+	}
 
-    	err = userlib.dsVerify(&pubKey, sinData.Enc)
-    	if err != nil{
-        	return nil, errors.New("GetUser: unmarshal storedData unable to verify")
-    	}
+	// err = userlib.DSVerify(&pubKey, sinData.Enc)
+	// if err != nil {
+	// 	return nil, errors.New("GetUser: unmarshal storedData unable to verify")
+	// }// err = userlib.DSVerify(&pubKey, sinData.Enc)
+	// if err != nil {
+	// 	return nil, errors.New("GetUser: unmarshal storedData unable to verify")
+	// }
 	//gotta fix lines above this
-	
-	
+
 	return userdataptr, nil
 }
 
