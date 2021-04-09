@@ -84,7 +84,7 @@ type User struct {
 	Password          string
 	RSAPubKey         userlib.PKEEncKey
 	RSAPrivKey        userlib.PKEDecKey
-	HMAC              []byte
+	HMAC_Key          []byte
 	Signature         userlib.PrivateKeyType
 	Files             map[string]FileMapVals
 	//update 1
@@ -111,6 +111,20 @@ To retrieve their data, split the datastore value into the signature and AES enc
 Check to see if signature matches the result of signing the AES part. If so data valid.
 Decrypt AES, and unmarshal.
 */
+func pad(toPad []byte) (res []byte) {
+
+	offset := userlib.AESBlockSizeBytes - (len(toPad) % userlib.AESBlockSizeBytes)
+	res = toPad
+	for i := 0; i < offset; i++ {
+		res = append(res, byte(offset))
+	}
+	return
+}
+
+func depad(toUnPad []byte) (res []byte) {
+	res = toUnPad[:len(toUnPad)-int(toUnPad[len(toUnPad)-1])]
+	return
+}
 
 // InitUser will be called a single time to initialize a new user.
 func InitUser(username string, password string) (userdataptr *User, err error) {
@@ -119,20 +133,18 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	//TODO: This is a toy implementation.
 	userdata.Username = username
-	unhashedStoredKey := userlib.Argon2Key([]byte(username), []byte(password), uint32(userlib.HashSizeBytes))
+	unhashedStoredKey := userlib.Argon2Key([]byte(username), []byte(password), 16)
 	userdata.UnhashedStoredKey = unhashedStoredKey
 	userdata.Password = password
 	pubKey, privKey, err := userlib.PKEKeyGen()
 	userdata.RSAPrivKey = privKey
 	userdata.RSAPubKey = pubKey
 	userdata.Files = make(map[string]FileMapVals)
-	// userdata.HMAC, _ = userlib.HMACEval([]byte(username), []byte(password))
+	userdata.HMAC_Key, _ = userlib.HMACEval(unhashedStoredKey, []byte(password))
 	id := uuid.New()
 	userdata.UUID = id
-	//AESKey := userlib.Argon2Key(unhashedStoredKey, []byte(username), uint32(userlib.AESKeySizeBytes))
-	// hashedStoredKey := id.FromBytes([]byte(filename + userdata.Username)[:16])
-	//datastoredKey := string(userlib.Argon2Key([]byte(username), []byte(password), uint32(userlib.AESKeySizeBytes)))
-	// datastoredKey := string(hashedStoredKey)
+	salt := []byte("yolo")
+	databasePassword := userlib.Argon2Key([]byte(password), salt, 16)
 
 	if err != nil {
 		return nil, errors.New("Init User Struct: marshal userdata error") //keep on trucking through
@@ -145,11 +157,14 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	}
 	userdata.Signature = sig
 	marshaledData, err := json.Marshal(userdata)
+	encrypted_marshal := userlib.SymEnc(unhashedStoredKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaledData))
+	user_data_tag, _ := userlib.HMACEval(unhashedStoredKey, encrypted_marshal)
+	hidden_data := append(user_data_tag, encrypted_marshal...)
 	userlib.KeystoreSet(username+"rsa", pubKey)
 	userlib.KeystoreSet(username, userdata.RSAPubKey)
 	userlib.KeystoreSet(username+"sig_ver", verify)
-	userlib.DatastoreSet(bytesToUUID(unhashedStoredKey), marshaledData)
-
+	userlib.DatastoreSet(bytesToUUID(unhashedStoredKey), hidden_data)
+	userlib.DatastoreSet(bytesToUUID([]byte(username)), databasePassword)
 	//End of toy implementation
 
 	return &userdata, nil
@@ -166,29 +181,34 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	if !ok {
 		return nil, errors.New("GetUser ERROR, public key is non-existent")
 	}
-	unhashedStoredKey := userlib.Argon2Key([]byte(username), []byte(password), uint32(userlib.HashSizeBytes))
-	// AESKey := userlib.Argon2Key(unhashedStoredKey, []byte(password), uint32(userlib.AESKeySizeBytes))
-	// encrypt this one with 512 hashedStoredKey :=
-	// encrypt this one with 512 datastoredKey := string(hashedStoreKey)
-	marshaledData, ok := userlib.DatastoreGet(bytesToUUID(unhashedStoredKey))
-	if !ok {
-		return nil, errors.New("GetUser ERROR, database is non-existent")
+
+	salted_pw, exists := userlib.DatastoreGet(bytesToUUID([]byte(username)))
+	if !exists {
+		return nil, errors.New("the user not in datastore")
 	}
-	//still have to fix these next few lines
-	// var sinData sinEncData
-	err = json.Unmarshal(marshaledData, userdataptr)
+	salt := []byte("yolo")
+	probe_pw := userlib.Argon2Key([]byte(password), salt, 16)
+	if !userlib.HMACEqual(salted_pw, probe_pw) {
+		return nil, errors.New("bad password")
+	}
+
+	unhashedStoredKey := userlib.Argon2Key([]byte(username), []byte(password), 16)
+	HMAC_Key, _ := userlib.HMACEval(unhashedStoredKey, []byte(password))
+	hidden_data, ok := userlib.DatastoreGet(bytesToUUID(unhashedStoredKey))
+
+	hidden_user := hidden_data[:userlib.HashSizeBytes]
+	hmac_tag := hidden_data[userlib.HashSizeBytes:]
+
+	probe_hidden_user, _ := userlib.HMACEval(HMAC_Key, hidden_user)
+	if !userlib.HMACEqual(probe_hidden_user, hmac_tag) {
+		return nil, errors.New("data for user seems to be corrupted")
+	}
+
+	err = json.Unmarshal(depad(userlib.SymDec(unhashedStoredKey, hidden_user)), userdataptr)
+
 	if err != nil {
 		return nil, errors.New("GetUser: unmarshal storedData unable to verify")
 	}
-
-	// err = userlib.DSVerify(&pubKey, sinData.Enc)
-	// if err != nil {
-	// 	return nil, errors.New("GetUser: unmarshal storedData unable to verify")
-	// }// err = userlib.DSVerify(&pubKey, sinData.Enc)
-	// if err != nil {
-	// 	return nil, errors.New("GetUser: unmarshal storedData unable to verify")
-	// }
-	//gotta fix lines above this
 
 	return userdataptr, nil
 }
