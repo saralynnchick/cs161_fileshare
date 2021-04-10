@@ -6,6 +6,8 @@ package proj2
 // break the autograder and everyone will be sad.
 
 import (
+	"fmt"
+
 	"github.com/cs161-staff/userlib"
 
 	// The JSON library will be useful for serializing go structs.
@@ -86,18 +88,27 @@ type User struct {
 	RSAPrivKey        userlib.PKEDecKey
 	HMAC_Key          []byte
 	Signature         userlib.PrivateKeyType
-	Files             map[string]FileMapVals
-	//update 1
+	// FilePerms         map[string]FileMapVals
+	FileLocation map[string]uuid.UUID
+	FileEncrypt  map[string][]byte
+	FileHMAC     map[string][]byte
+
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
 }
 
-type FileMapVals struct {
-	fileKey []byte
-	AESKey  []byte
-	HMAC    []byte //lets see if these fix the bug for AES and HMAC key creation
+type FileContent struct {
+	Data []byte
+	Next userlib.UUID
 }
+
+// type FileMapVals struct {
+// 	fileKey  []byte
+// 	AESKey   []byte
+// 	HMAC     []byte //lets see if these fix the bug for AES and HMAC key creation
+// 	Location uuid.UUID
+// }
 
 //FIXME
 //TODO
@@ -139,13 +150,15 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	pubKey, privKey, err := userlib.PKEKeyGen()
 	userdata.RSAPrivKey = privKey
 	userdata.RSAPubKey = pubKey
-	userdata.Files = make(map[string]FileMapVals)
+	userdata.FileEncrypt = make(map[string][]byte)
+	userdata.FileHMAC = make(map[string][]byte)
+	userdata.FileLocation = make(map[string]userlib.UUID)
 	userdata.HMAC_Key, _ = userlib.HMACEval(unhashedStoredKey, []byte(password))
 	id := uuid.New()
 	userdata.UUID = id
-	salt := []byte("yolo")
-	databasePassword := userlib.Argon2Key([]byte(password), salt, 16)
-
+	// salt := []byte("yolo")
+	// databasePassword := userlib.Argon2Key([]byte(password), salt, 16)
+	// databasePassword := append(salt, password...)
 	if err != nil {
 		return nil, errors.New("Init User Struct: marshal userdata error") //keep on trucking through
 	}
@@ -155,6 +168,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err != nil {
 		return nil, errors.New("Init User Struct: datastore error") //keep on trucking through
 	}
+	// uname := bytesToUUID([]byte(username))
 	userdata.Signature = sig
 	marshaledData, err := json.Marshal(userdata)
 	encrypted_marshal := userlib.SymEnc(unhashedStoredKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaledData))
@@ -164,7 +178,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userlib.KeystoreSet(username, userdata.RSAPubKey)
 	userlib.KeystoreSet(username+"sig_ver", verify)
 	userlib.DatastoreSet(bytesToUUID(unhashedStoredKey), hidden_data)
-	userlib.DatastoreSet(bytesToUUID([]byte(username)), databasePassword)
+	// userlib.DatastoreSet(uname, salt)
 	//End of toy implementation
 
 	return &userdata, nil
@@ -182,30 +196,23 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, errors.New("GetUser ERROR, public key is non-existent")
 	}
 
-	salted_pw, exists := userlib.DatastoreGet(bytesToUUID([]byte(username)))
-	if !exists {
-		return nil, errors.New("the user not in datastore")
-	}
-	salt := []byte("yolo")
-	probe_pw := userlib.Argon2Key([]byte(password), salt, 16)
-	if !userlib.HMACEqual(salted_pw, probe_pw) {
-		return nil, errors.New("bad password")
-	}
-
 	unhashedStoredKey := userlib.Argon2Key([]byte(username), []byte(password), 16)
-	HMAC_Key, _ := userlib.HMACEval(unhashedStoredKey, []byte(password))
+	// HMAC_Key, _ := userlib.HMACEval(unhashedStoredKey, []byte(password))
 	hidden_data, ok := userlib.DatastoreGet(bytesToUUID(unhashedStoredKey))
 
-	hidden_user := hidden_data[:userlib.HashSizeBytes]
-	hmac_tag := hidden_data[userlib.HashSizeBytes:]
+	if !ok {
+		return nil, errors.New("Bad password username combo")
+	}
 
-	probe_hidden_user, _ := userlib.HMACEval(HMAC_Key, hidden_user)
+	hmac_tag := hidden_data[:userlib.HashSizeBytes]
+	hidden_user := hidden_data[userlib.HashSizeBytes:]
+
+	probe_hidden_user, _ := userlib.HMACEval(unhashedStoredKey, hidden_user)
 	if !userlib.HMACEqual(probe_hidden_user, hmac_tag) {
 		return nil, errors.New("data for user seems to be corrupted")
 	}
 
 	err = json.Unmarshal(depad(userlib.SymDec(unhashedStoredKey, hidden_user)), userdataptr)
-
 	if err != nil {
 		return nil, errors.New("GetUser: unmarshal storedData unable to verify")
 	}
@@ -216,11 +223,34 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 // StoreFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/storefile.html
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
-
+	var file_data FileContent
 	//TODO: This is a toy implementation.
-	storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
-	jsonData, _ := json.Marshal(data)
-	userlib.DatastoreSet(storageKey, jsonData)
+
+	file_data.Data = data
+	// file_data.Next = userlib.nil
+
+	_, exists := userdata.FileLocation[filename]
+	file_enc := userlib.RandomBytes(userlib.AESKeySizeBytes)
+	file_hmac := userlib.RandomBytes(userlib.AESKeySizeBytes)
+	if !exists {
+		file_uuid := uuid.New()
+
+		userdata.FileLocation[filename] = file_uuid
+
+	}
+
+	userdata.FileEncrypt[filename] = file_enc
+	userdata.FileHMAC[filename] = file_hmac
+
+	marshaled_file, _ := json.Marshal(file_data)
+	fmt.Println(marshaled_file)
+	encryptedFile := userlib.SymEnc(file_enc, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaled_file))
+	file_tag, _ := userlib.HMACEval(file_hmac, encryptedFile)
+	hidden_file := append(file_tag, encryptedFile...)
+
+	// storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
+	// jsonData, _ := json.Marshal(data)
+	userlib.DatastoreSet(userdata.FileLocation[filename], hidden_file)
 	//End of toy implementation
 
 	return
@@ -235,18 +265,37 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // LoadFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/loadfile.html
 func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
-
+	var file_data FileContent
 	//TODO: This is a toy implementation.
-	storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
-	dataJSON, ok := userlib.DatastoreGet(storageKey)
+	hidden_file, ok := userlib.DatastoreGet(userdata.FileLocation[filename])
+
 	if !ok {
-		return nil, errors.New(strings.ToTitle("File not found!"))
+		return nil, errors.New("The filename doesn't exist for this user")
 	}
-	json.Unmarshal(dataJSON, &dataBytes)
+
+	hmac_tag := hidden_file[:userlib.HashSizeBytes]
+	hidden_data := hidden_file[userlib.HashSizeBytes:]
+
+	probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+
+	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
+		return nil, errors.New("Data seems to be corrupted")
+	}
+
+	encKey := userdata.FileEncrypt[filename]
+
+	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_data)
+	// storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
+	// dataJSON, ok := userlib.DatastoreGet(storageKey)
+	// if !ok {
+	// 	return nil, errors.New(strings.ToTitle("File not found!"))
+	// }
+	// json.Unmarshal(dataJSON, &dataBytes)
+	dataBytes = file_data.Data
+
 	return dataBytes, nil
 	//End of toy implementation
 
-	return
 }
 
 // ShareFile is documented at:
