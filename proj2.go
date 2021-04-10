@@ -231,7 +231,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	_, exists := userdata.FileLocation[filename]
 	file_enc := userlib.RandomBytes(userlib.AESKeySizeBytes)
-	file_hmac := userlib.RandomBytes(userlib.AESKeySizeBytes)
+	file_hmac := userlib.Argon2Key(userlib.RandomBytes(userlib.AESKeySizeBytes), userlib.RandomBytes(userlib.AESKeySizeBytes), 16)
 	if !exists {
 		file_uuid := uuid.New()
 
