@@ -252,7 +252,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	// jsonData, _ := json.Marshal(data)
 	userlib.DatastoreSet(userdata.FileLocation[filename], hidden_file)
 	//End of toy implementation
-	//patch2 V
+	//patch2 V2
 
 	return
 }
