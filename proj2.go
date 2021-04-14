@@ -6,8 +6,6 @@ package proj2
 // break the autograder and everyone will be sad.
 
 import (
-	"fmt"
-
 	"github.com/cs161-staff/userlib"
 
 	// The JSON library will be useful for serializing go structs.
@@ -227,7 +225,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	//TODO: This is a toy implementation.
 
 	file_data.Data = data
-	// file_data.Next = userlib.nil
+	file_data.Next = bytesToUUID([]byte("nullnullnullnull"))
 
 	_, exists := userdata.FileLocation[filename]
 	file_enc := userlib.RandomBytes(userlib.AESKeySizeBytes)
@@ -243,7 +241,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	userdata.FileHMAC[filename] = file_hmac
 
 	marshaled_file, _ := json.Marshal(file_data)
-	fmt.Println(marshaled_file)
+
 	encryptedFile := userlib.SymEnc(file_enc, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaled_file))
 	file_tag, _ := userlib.HMACEval(file_hmac, encryptedFile)
 	hidden_file := append(file_tag, encryptedFile...)
@@ -259,6 +257,66 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 // AppendFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/appendfile.html
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
+
+	var cur_file_data FileContent
+	var new_file_data FileContent
+
+	hidden_file, ok := userlib.DatastoreGet(userdata.FileLocation[filename])
+
+	if !ok {
+		return errors.New("what are we appending")
+	}
+	hmac_tag := hidden_file[:userlib.HashSizeBytes]
+	hidden_data := hidden_file[userlib.HashSizeBytes:]
+
+	probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+
+	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
+		return errors.New("Data seems to be corrupted")
+	}
+
+	encKey := userdata.FileEncrypt[filename]
+
+	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &cur_file_data)
+	old_id := userdata.FileLocation[filename]
+	for cur_file_data.Next != bytesToUUID([]byte("null")) {
+		hidden_file, ok := userlib.DatastoreGet(cur_file_data.Next)
+		old_id = cur_file_data.Next
+		if !ok {
+			return errors.New("what are we appending")
+		}
+		hmac_tag := hidden_file[:userlib.HashSizeBytes]
+		hidden_data := hidden_file[userlib.HashSizeBytes:]
+		probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+
+		if !userlib.HMACEqual(hmac_tag, probe_hmac) {
+			return errors.New("Data seems to be corrupted")
+		}
+
+		encKey := userdata.FileEncrypt[filename]
+
+		err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &cur_file_data)
+	}
+
+	new_file_data.Data = data
+	new_file_data.Next = bytesToUUID([]byte("null"))
+
+	hmacKey := userdata.FileHMAC[filename]
+	new_id := uuid.New()
+	marshaled_file, _ := json.Marshal(new_file_data)
+	encryptedFile := userlib.SymEnc(encKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaled_file))
+	file_tag, _ := userlib.HMACEval(hmacKey, encryptedFile)
+	hidden_file = append(file_tag, encryptedFile...)
+	userlib.DatastoreSet(new_id, hidden_file)
+
+	cur_file_data.Next = new_id
+
+	marshaled_file, _ = json.Marshal(cur_file_data)
+	encryptedFile = userlib.SymEnc(encKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaled_file))
+	file_tag, _ = userlib.HMACEval(hmacKey, encryptedFile)
+	hidden_file = append(file_tag, encryptedFile...)
+	userlib.DatastoreSet(old_id, hidden_file)
+
 	return
 }
 
@@ -285,13 +343,27 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	encKey := userdata.FileEncrypt[filename]
 
 	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_data)
-	// storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
-	// dataJSON, ok := userlib.DatastoreGet(storageKey)
-	// if !ok {
-	// 	return nil, errors.New(strings.ToTitle("File not found!"))
-	// }
-	// json.Unmarshal(dataJSON, &dataBytes)
+
 	dataBytes = file_data.Data
+
+	for file_data.Next != bytesToUUID([]byte("nullnullnullnull")) {
+		hidden_file, ok := userlib.DatastoreGet(file_data.Next)
+		if !ok {
+			return nil, errors.New("what are we appending")
+		}
+		hmac_tag := hidden_file[:userlib.HashSizeBytes]
+		hidden_data := hidden_file[userlib.HashSizeBytes:]
+		probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+
+		if !userlib.HMACEqual(hmac_tag, probe_hmac) {
+			return nil, errors.New("Data seems to be corrupted")
+		}
+
+		encKey := userdata.FileEncrypt[filename]
+
+		err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_data)
+		dataBytes = append(dataBytes, file_data.Data...)
+	}
 
 	return dataBytes, nil
 	//End of toy implementation
