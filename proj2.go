@@ -91,12 +91,31 @@ type User struct {
 	FileEncrypt  map[string][]byte
 	FileHMAC     map[string][]byte
 
+	//
+
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
 }
 
-type FileContent struct {
+// pkeEncryption on the sharing struct instead of symmetric
+//share sends a uuid which is where the signed and encrypted shareFile struct exists.
+
+type shareFile struct {
+	owner   uuid.UUID
+	file    uuid.UUID
+	encKey  []byte
+	hmacKey []byte
+	encData []byte
+	fData   []byte
+}
+
+type File struct {
+	Head uuid.UUID
+	Tail uuid.UUID
+}
+
+type FileNode struct {
 	Data []byte
 	Next userlib.UUID
 }
@@ -221,7 +240,8 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 // StoreFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/storefile.html
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
-	var file_data FileContent
+	var file_data FileNode
+	var file_container File
 	//TODO: This is a toy implementation.
 
 	file_data.Data = data
@@ -231,11 +251,15 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	file_enc := userlib.RandomBytes(userlib.AESKeySizeBytes)
 	file_hmac := userlib.Argon2Key(userlib.RandomBytes(userlib.AESKeySizeBytes), userlib.RandomBytes(userlib.AESKeySizeBytes), 16)
 	if !exists {
-		file_uuid := uuid.New()
+		container_uuid := uuid.New()
 
-		userdata.FileLocation[filename] = file_uuid
+		userdata.FileLocation[filename] = container_uuid
 
 	}
+	file_uuid := uuid.New()
+
+	file_container.Head = file_uuid
+	file_container.Tail = file_uuid
 
 	userdata.FileEncrypt[filename] = file_enc
 	userdata.FileHMAC[filename] = file_hmac
@@ -246,10 +270,18 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	file_tag, _ := userlib.HMACEval(file_hmac, encryptedFile)
 	hidden_file := append(file_tag, encryptedFile...)
 
+	userlib.DatastoreSet(file_uuid, hidden_file)
+
+	mashaled_cont, _ := json.Marshal(file_container)
+	encryptedCont := userlib.SymEnc(file_enc, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(mashaled_cont))
+	cont_tag, _ := userlib.HMACEval(file_hmac, encryptedCont)
+	hidden_cont := append(cont_tag, encryptedCont...)
+
 	// storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
 	// jsonData, _ := json.Marshal(data)
-	userlib.DatastoreSet(userdata.FileLocation[filename], hidden_file)
+	userlib.DatastoreSet(userdata.FileLocation[filename], hidden_cont)
 	//End of toy implementation
+	print(hidden_cont)
 
 	return
 }
@@ -258,8 +290,8 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 // https://cs161.org/assets/projects/2/docs/client_api/appendfile.html
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
-	var cur_file_data FileContent
-	var new_file_data FileContent
+	var cur_file_data FileNode
+	var new_file_data FileNode
 
 	hidden_file, ok := userlib.DatastoreGet(userdata.FileLocation[filename])
 
@@ -323,18 +355,22 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // LoadFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/loadfile.html
 func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
-	var file_data FileContent
+
+	var file_data FileNode
+	var file_container File
+
 	//TODO: This is a toy implementation.
-	hidden_file, ok := userlib.DatastoreGet(userdata.FileLocation[filename])
+	hidden_c, ok := userlib.DatastoreGet(userdata.FileLocation[filename])
+	print(hidden_c)
 
 	if !ok {
 		return nil, errors.New("The filename doesn't exist for this user")
 	}
 
-	hmac_tag := hidden_file[:userlib.HashSizeBytes]
-	hidden_data := hidden_file[userlib.HashSizeBytes:]
+	hmac_tag := hidden_c[:userlib.HashSizeBytes]
+	hidden_cont := hidden_c[userlib.HashSizeBytes:]
 
-	probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+	probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_cont)
 
 	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
 		return nil, errors.New("Data seems to be corrupted")
@@ -342,12 +378,27 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
 	encKey := userdata.FileEncrypt[filename]
 
-	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_data)
+	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_cont)), &file_container)
 
-	dataBytes = file_data.Data
+	print(json.Marshal(file_container))
+	hidden_file, ok := userlib.DatastoreGet(file_container.Head)
+	if !ok {
+		return nil, errors.New(" bad head yyyy")
+	}
+	hmac_tag = hidden_file[:userlib.HashSizeBytes]
+	hidden_file = hidden_file[userlib.HashSizeBytes:]
+	probe_hmac, _ = userlib.HMACEval(userdata.FileHMAC[filename], hidden_file)
 
-	for file_data.Next != bytesToUUID([]byte("nullnullnullnull")) {
-		hidden_file, ok := userlib.DatastoreGet(file_data.Next)
+	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
+		return nil, errors.New("Data seems to be corrupted")
+	}
+
+	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_file)), &file_data)
+
+	cur_id := file_container.Head
+
+	for cur_id != file_container.Tail {
+		hidden_file, ok := userlib.DatastoreGet(cur_id)
 		if !ok {
 			return nil, errors.New("what are we appending")
 		}
@@ -363,7 +414,24 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
 		err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_data)
 		dataBytes = append(dataBytes, file_data.Data...)
+		cur_id = file_data.Next
 	}
+
+	hidden_file, ok = userlib.DatastoreGet(cur_id)
+	if !ok {
+		return nil, errors.New("what are we appending")
+	}
+	hmac_tag = hidden_file[:userlib.HashSizeBytes]
+	hidden_data := hidden_file[userlib.HashSizeBytes:]
+	probe_hmac, _ = userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+
+	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
+		return nil, errors.New("Data seems to be corrupted")
+	}
+
+	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_data)
+	dataBytes = append(dataBytes, file_data.Data...)
+	cur_id = file_data.Next
 
 	return dataBytes, nil
 	//End of toy implementation
@@ -374,14 +442,57 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 // https://cs161.org/assets/projects/2/docs/client_api/sharefile.html
 func (userdata *User) ShareFile(filename string, recipient string) (
 	accessToken uuid.UUID, err error) {
+	//
+	// curFile, ok := userdata.FileLocation[filename]
+	// if !ok {
+	// 	return errors.New("File Error: Does Not Exist")
+	// }
+	// marshalled, err := json.Marshal(curFile)
+	// if err != nil {
+	// 	return errors.New("Shared File Marshal Error")
+	// }
+	// sharingPublicKey, ok = userlib.KeystoreGet(recipient)
+	// if !ok {
+	// 	return errors.New("Recipient Key Error: Does Not Exist")
+	// }
 
-	return
+	// storeNewID := uuid.New()
+	// hashedID := userlib.hash(storeNewId)
+	// storeHashed := string(hashedID)
+	// encryptedContent := userlib.pkeEnc(&sharingPublicKey, marshalled, nil)
+	// if err != nil {
+	// 	return errors.New("Shared Struct Error: pkeEnc")
+	// }
+	// privData, err := userlib.dsSign(&userdata.RSAPrivKey, encryptedContent)
+	// if err != nil {
+	// 	return errors.New("Shared Struct Error: dsSign")
+	// }
+	// fsendData := shareFile{encryptedContent, privData}
+	// storeEncData, err := json.Marshal(fsendData)
+	// if err != nil {
+	// 	return errors.New("Shared Struct Error: Marshal Encrypted Data")
+	// }
+	// userlib.DataStoreSet(storeHashed, storeEncData)
+
+	// return storeHashed, nil
+	return userdata.FileLocation[filename], nil
 }
 
 // ReceiveFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/receivefile.html
 func (userdata *User) ReceiveFile(filename string, sender string,
-	accessToken uuid.UUID) error {
+	
+	storedValue, ok := userlib.DatastoreGet(accessToken)
+	if !ok {
+		return errors.New("RecieveFile Function Error: Data Does Not Exist")
+	}
+
+	keyFromSender, ok := userlib.keystoreGet(sender)
+	if !ok {
+		return errors.New("RecieveFile Function Error: Senders Public Key Does Not Exist")
+	}
+ccessToken uuid.UUID) error {
+
 	return nil
 }
 
