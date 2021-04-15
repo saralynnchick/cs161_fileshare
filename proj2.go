@@ -247,15 +247,13 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	file_data.Data = data
 	file_data.Next = bytesToUUID([]byte("nullnullnullnull"))
 
-	_, exists := userdata.FileLocation[filename]
+	// _, exists := userdata.FileLocation[filename]
 	file_enc := userlib.RandomBytes(userlib.AESKeySizeBytes)
 	file_hmac := userlib.Argon2Key(userlib.RandomBytes(userlib.AESKeySizeBytes), userlib.RandomBytes(userlib.AESKeySizeBytes), 16)
-	if !exists {
-		container_uuid := uuid.New()
+	container_uuid := uuid.New()
 
-		userdata.FileLocation[filename] = container_uuid
+	userdata.FileLocation[filename] = container_uuid
 
-	}
 	file_uuid := uuid.New()
 
 	file_container.Head = file_uuid
@@ -482,18 +480,18 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 func (userdata *User) ReceiveFile(filename string, sender string,
 	accessToken uuid.UUID) error {
 
-	//get our data and key
-	hidden_data, ok := userlib.DatastoreGet(accessToken)
-	if !ok {
-		return errors.New("RecieveFile Function Error: Data Does Not Exist")
-	}
+	// //get our data and key
+	// hidden_data, ok := userlib.DatastoreGet(accessToken)
+	// if !ok {
+	// 	return errors.New("RecieveFile Function Error: Data Does Not Exist")
+	// }
 
-	keyFromSender, ok := userlib.KeystoreGet(sender)
-	if !ok {
-		return errors.New("RecieveFile Function Error: Senders Public Key Does Not Exist")
-	}
-	//verification
-	err := json.Unmarshal()
+	// keyFromSender, ok := userlib.KeystoreGet(sender)
+	// if !ok {
+	// 	return errors.New("RecieveFile Function Error: Senders Public Key Does Not Exist")
+	// }
+	// //verification
+	// err := json.Unmarshal()
 
 	return nil
 }

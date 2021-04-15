@@ -86,6 +86,45 @@ func TestStorage(t *testing.T) {
 	}
 }
 
+func TestAppend(t *testing.T) {
+	clear()
+	bob, err := InitUser("bob", "password")
+	if err != nil {
+		t.Error("User init failed", err)
+		return
+	}
+
+	v1 := []byte("dulll")
+	bob.StoreFile("f1", v1)
+	vvs, err := bob.LoadFile("f1")
+	if err != nil {
+		t.Error("load file failed 1", err)
+		return
+	}
+	if !reflect.DeepEqual(v1, vvs) {
+		t.Error("file not same", v1, vvs)
+		return
+	}
+
+	appendData := []byte("uv")
+	err = bob.AppendFile("f1", appendData)
+	if err != nil {
+		t.Error("append failed", err)
+		return
+	}
+	data := append(v1, appendData...)
+	svvs, err := bob.LoadFile("f1")
+	if err != nil {
+		t.Error("load after append failed", err)
+		return
+	}
+	if !reflect.DeepEqual(svvs, data) {
+		t.Error("file not same", svvs, data)
+		return
+	}
+
+}
+
 func TestInvalidFile(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")
