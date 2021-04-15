@@ -377,7 +377,6 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
 	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_cont)), &file_container)
 
-	print(json.Marshal(file_container))
 	hidden_file, ok := userlib.DatastoreGet(file_container.Head)
 	if !ok {
 		return nil, errors.New(" bad head yyyy")
