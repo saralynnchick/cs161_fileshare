@@ -518,5 +518,17 @@ func updateUser(userdata *User) {
 // RevokeFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/revokefile.html
 func (userdata *User) RevokeFile(filename string, targetUsername string) (err error) {
-	return
+	
+	curr_file, ok := userdata.FileLocation[filename]
+	if !ok {
+		return errors.New("Revoke done messed up")
+	}
+	curr_stored_data, ok := userlib.DataStoreGet(//get current main file from data storage)
+	//decrypt data from the files we just got both hmac and symdec?
+	//unmarshal data
+	//verify signatures/came from original source
+	//unmarshal sigs??
+	//verify priv keys??
+	
+	return nil
 }
