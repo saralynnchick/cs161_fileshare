@@ -102,12 +102,12 @@ type User struct {
 //share sends a uuid which is where the signed and encrypted shareFile struct exists.
 
 type shareFile struct {
-	owner   uuid.UUID
-	file    uuid.UUID
-	encKey  []byte
-	hmacKey []byte
-	encData []byte
-	fData   []byte
+	Owner    uuid.UUID
+	FileCont uuid.UUID
+	EncKey   []byte
+	HmacKey  []byte
+	// encData []byte //for recieve file
+	// fData   []byte //for recieve
 }
 
 type File struct {
@@ -171,7 +171,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdata.FileHMAC = make(map[string][]byte)
 	userdata.FileLocation = make(map[string]userlib.UUID)
 	userdata.HMAC_Key, _ = userlib.HMACEval(unhashedStoredKey, []byte(password))
-	id := uuid.New()
+	id := bytesToUUID(unhashedStoredKey)
 	userdata.UUID = id
 	// salt := []byte("yolo")
 	// databasePassword := userlib.Argon2Key([]byte(password), salt, 16)
@@ -436,63 +436,80 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
 // ShareFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/sharefile.html
-func (userdata *User) ShareFile(filename string, recipient string) (
-	accessToken uuid.UUID, err error) {
-	//
-	// curFile, ok := userdata.FileLocation[filename]
-	// if !ok {
-	// 	return errors.New("File Error: Does Not Exist")
-	// }
-	// marshalled, err := json.Marshal(curFile)
-	// if err != nil {
-	// 	return errors.New("Shared File Marshal Error")
-	// }
-	// sharingPublicKey, ok = userlib.KeystoreGet(recipient)
-	// if !ok {
-	// 	return errors.New("Recipient Key Error: Does Not Exist")
-	// }
+func (userdata *User) ShareFile(filename string, recipient string) (accessToken uuid.UUID, err error) {
 
-	// storeNewID := uuid.New()
-	// hashedID := userlib.hash(storeNewId)
-	// storeHashed := string(hashedID)
-	// encryptedContent := userlib.pkeEnc(&sharingPublicKey, marshalled, nil)
-	// if err != nil {
-	// 	return errors.New("Shared Struct Error: pkeEnc")
-	// }
-	// privData, err := userlib.dsSign(&userdata.RSAPrivKey, encryptedContent)
-	// if err != nil {
-	// 	return errors.New("Shared Struct Error: dsSign")
-	// }
-	// fsendData := shareFile{encryptedContent, privData}
-	// storeEncData, err := json.Marshal(fsendData)
-	// if err != nil {
-	// 	return errors.New("Shared Struct Error: Marshal Encrypted Data")
-	// }
-	// userlib.DataStoreSet(storeHashed, storeEncData)
+	var share_cont shareFile
+	share_cont.Owner = userdata.UUID
+	share_cont.FileCont = userdata.FileLocation[filename]
+	share_cont.EncKey = userdata.FileEncrypt[filename]
+	share_cont.HmacKey = userdata.FileHMAC[filename]
 
-	// return storeHashed, nil
-	return userdata.FileLocation[filename], nil
+	shared_uuid := uuid.New()
+
+	recipient_pubKey, ok := userlib.KeystoreGet(recipient)
+
+	if !ok {
+		return shared_uuid, errors.New("bad map yo")
+	}
+
+	sender_sig_key := userdata.Signature
+
+	marshaled_share, _ := json.Marshal(share_cont)
+	encrypted_share, _ := userlib.PKEEnc(recipient_pubKey, marshaled_share)
+	signed_tag, _ := userlib.DSSign(sender_sig_key, encrypted_share)
+	share_camo := append(signed_tag, encrypted_share...)
+
+	userlib.DatastoreSet(shared_uuid, share_camo)
+
+	return shared_uuid, nil
 }
 
 // ReceiveFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/receivefile.html
 func (userdata *User) ReceiveFile(filename string, sender string,
 	accessToken uuid.UUID) error {
+	var encSharedData shareFile
 
-	// //get our data and key
-	// hidden_data, ok := userlib.DatastoreGet(accessToken)
-	// if !ok {
-	// 	return errors.New("RecieveFile Function Error: Data Does Not Exist")
-	// }
+	hidden_share, ok := userlib.DatastoreGet(accessToken)
+	if !ok {
+		return errors.New("we f'd up")
+	}
 
-	// keyFromSender, ok := userlib.KeystoreGet(sender)
-	// if !ok {
-	// 	return errors.New("RecieveFile Function Error: Senders Public Key Does Not Exist")
-	// }
-	// //verification
-	// err := json.Unmarshal()
+	sender_publickey, ok := userlib.KeystoreGet(sender + "sig_ver")
+	if !ok {
+		return errors.New("we f'd up pt.2 with getting sender key")
+	}
+	//verify the file and decrypt
+	sign_tag := hidden_share[:2048]
+	encrypted_data := hidden_share[2048:]
+	err := userlib.DSVerify(sender_publickey, encrypted_data, sign_tag)
+	if err != nil {
+		return errors.New("Done messed up verifying")
+	}
+	fileDecrypted, err := userlib.PKEDec(userdata.RSAPrivKey, encrypted_data)
+	//resend user struct
+	err = json.Unmarshal(fileDecrypted, &encSharedData)
+	if err != nil {
+		return errors.New("Done messed up unmarshalling")
+	}
+
+	userdata.FileLocation[filename] = encSharedData.FileCont
+	userdata.FileEncrypt[filename] = encSharedData.EncKey
+	userdata.FileHMAC[filename] = encSharedData.HmacKey
+
+	//re-encrypt user stuff
 
 	return nil
+}
+
+//helper function to re-encrypt and sign (for updating on server)
+func updateUser(userdata *User) {
+	unhashedStoredKey := userlib.Argon2Key([]byte(userdata.Username), []byte(userdata.Password), 16)
+	marshaledData, _ := json.Marshal(userdata)
+	encrypted_marshal := userlib.SymEnc(unhashedStoredKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaledData))
+	user_data_tag, _ := userlib.HMACEval(unhashedStoredKey, encrypted_marshal)
+	hidden_data := append(user_data_tag, encrypted_marshal...)
+	userlib.DatastoreSet(bytesToUUID(unhashedStoredKey), hidden_data)
 }
 
 // RevokeFile is documented at:
