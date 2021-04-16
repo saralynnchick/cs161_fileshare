@@ -452,8 +452,10 @@ func (userdata *User) ShareFile(filename string, recipient string) (accessToken 
 		return shared_uuid, errors.New("bad map yo")
 	}
 
+	//double check the implementation we have right here with marshalled and sigs we are sending
+	//I think it breaks because we dont have the right order of signing and encrypting?
+	I think theres something else we have to remarshal bef
 	sender_sig_key := userdata.Signature
-
 	marshaled_share, _ := json.Marshal(share_cont)
 	encrypted_share, _ := userlib.PKEEnc(recipient_pubKey, marshaled_share)
 	signed_tag, _ := userlib.DSSign(sender_sig_key, encrypted_share)
@@ -498,7 +500,8 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	userdata.FileHMAC[filename] = encSharedData.HmacKey
 
 	//re-encrypt user stuff
-
+	//I think we just need to use the helper function we created to reencrypt at this part and reupload to server
+	//but sharing file part has to be figured out first. 
 	return nil
 }
 
