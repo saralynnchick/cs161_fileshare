@@ -102,12 +102,10 @@ type User struct {
 //share sends a uuid which is where the signed and encrypted shareFile struct exists.
 
 type shareFile struct {
-	Owner    uuid.UUID
+	// Og       uuid.UUID
 	FileCont uuid.UUID
 	EncKey   []byte
 	HmacKey  []byte
-	// encData []byte //for recieve file
-	// fData   []byte //for recieve
 }
 
 type File struct {
@@ -191,8 +189,9 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	encrypted_marshal := userlib.SymEnc(unhashedStoredKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaledData))
 	user_data_tag, _ := userlib.HMACEval(unhashedStoredKey, encrypted_marshal)
 	hidden_data := append(user_data_tag, encrypted_marshal...)
-	userlib.KeystoreSet(username+"rsa", pubKey)
+	// userlib.KeystoreSet(username+"rsa", pubKey)
 	userlib.KeystoreSet(username, userdata.RSAPubKey)
+	// println(pubKey.PubKey.N.String())
 	userlib.KeystoreSet(username+"sig_ver", verify)
 	userlib.DatastoreSet(bytesToUUID(unhashedStoredKey), hidden_data)
 	// userlib.DatastoreSet(uname, salt)
@@ -279,7 +278,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	// jsonData, _ := json.Marshal(data)
 	userlib.DatastoreSet(userdata.FileLocation[filename], hidden_cont)
 	//End of toy implementation
-	print(hidden_cont)
+	updateUser(userdata)
 
 	return
 }
@@ -358,7 +357,7 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
 	//TODO: This is a toy implementation.
 	hidden_c, ok := userlib.DatastoreGet(userdata.FileLocation[filename])
-	print(hidden_c)
+	// print(hidden_c)
 
 	if !ok {
 		return nil, errors.New("The filename doesn't exist for this user")
@@ -427,7 +426,6 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
 	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_data)
 	dataBytes = append(dataBytes, file_data.Data...)
-	cur_id = file_data.Next
 
 	return dataBytes, nil
 	//End of toy implementation
@@ -439,7 +437,7 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 func (userdata *User) ShareFile(filename string, recipient string) (accessToken uuid.UUID, err error) {
 
 	var share_cont shareFile
-	share_cont.Owner = userdata.UUID
+	// share_cont.Og = userdata.UUID
 	share_cont.FileCont = userdata.FileLocation[filename]
 	share_cont.EncKey = userdata.FileEncrypt[filename]
 	share_cont.HmacKey = userdata.FileHMAC[filename]
@@ -454,12 +452,21 @@ func (userdata *User) ShareFile(filename string, recipient string) (accessToken 
 
 	//double check the implementation we have right here with marshalled and sigs we are sending
 	//I think it breaks because we dont have the right order of signing and encrypting?
-	I think theres something else we have to remarshal bef
+	// I think theres something else we have to remarshal bef
 	sender_sig_key := userdata.Signature
-	marshaled_share, _ := json.Marshal(share_cont)
-	encrypted_share, _ := userlib.PKEEnc(recipient_pubKey, marshaled_share)
+	marshaled_share, err := json.Marshal(share_cont)
+	println(marshaled_share)
+	if err != nil {
+		return shared_uuid, errors.New("marshal fails")
+	}
+
+	encrypted_share, err := userlib.PKEEnc(recipient_pubKey, marshaled_share)
+	if err != nil {
+		return shared_uuid, errors.New("encryption failed")
+	}
 	signed_tag, _ := userlib.DSSign(sender_sig_key, encrypted_share)
 	share_camo := append(signed_tag, encrypted_share...)
+	// println(recipient_pubKey.PubKey.N.String())
 
 	userlib.DatastoreSet(shared_uuid, share_camo)
 
@@ -476,19 +483,22 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	if !ok {
 		return errors.New("we f'd up")
 	}
-
 	sender_publickey, ok := userlib.KeystoreGet(sender + "sig_ver")
 	if !ok {
 		return errors.New("we f'd up pt.2 with getting sender key")
 	}
 	//verify the file and decrypt
-	sign_tag := hidden_share[:2048]
-	encrypted_data := hidden_share[2048:]
+	sign_tag := hidden_share[:256]
+	encrypted_data := hidden_share[256:]
+	// print(encrypted_data)
 	err := userlib.DSVerify(sender_publickey, encrypted_data, sign_tag)
 	if err != nil {
 		return errors.New("Done messed up verifying")
 	}
 	fileDecrypted, err := userlib.PKEDec(userdata.RSAPrivKey, encrypted_data)
+	if err != nil {
+		return errors.New("bad decryption")
+	}
 	//resend user struct
 	err = json.Unmarshal(fileDecrypted, &encSharedData)
 	if err != nil {
@@ -501,7 +511,7 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 
 	//re-encrypt user stuff
 	//I think we just need to use the helper function we created to reencrypt at this part and reupload to server
-	//but sharing file part has to be figured out first. 
+	//but sharing file part has to be figured out first.
 	return nil
 }
 
@@ -518,17 +528,18 @@ func updateUser(userdata *User) {
 // RevokeFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/revokefile.html
 func (userdata *User) RevokeFile(filename string, targetUsername string) (err error) {
-	
-	curr_file, ok := userdata.FileLocation[filename]
-	if !ok {
-		return errors.New("Revoke done messed up")
-	}
-	curr_stored_data, ok := userlib.DataStoreGet(//get current main file from data storage)
+
+	// curr_file, ok := userdata.FileLocation[filename]
+	// if !ok {
+	// 	return errors.New("Revoke done messed up")
+	// }
+	// curr_stored_data, ok := userlib.DataStoreGet(//get current main file from data storage)
 	//decrypt data from the files we just got both hmac and symdec?
 	//unmarshal data
 	//verify signatures/came from original source
 	//unmarshal sigs??
 	//verify priv keys??
-	
-	return nil
+
+	return
+
 }
