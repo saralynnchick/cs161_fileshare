@@ -138,6 +138,22 @@ func TestSomeMoreShares(t *testing.T) {
 		t.Error("files didn't match")
 		return
 	}
+	u4.AppendFile("u4-f1", []byte("L"))
+	f1, err = u1.LoadFile("f1")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	f4, err = u4.LoadFile("u4-f1")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	if !reflect.DeepEqual(f1, f4) {
+		t.Error("files didn't match")
+		return
+	}
 }
 
 func TestStorage(t *testing.T) {
@@ -198,6 +214,40 @@ func TestAppend(t *testing.T) {
 		t.Error("file not same", svvs, data)
 		return
 	}
+
+}
+
+func TestOverwrite(t *testing.T) {
+	clear()
+	a, _ := InitUser("alice", "fubar")
+	b, _ := InitUser("bob", "lame")
+	a.StoreFile("f1", []byte("yadig"))
+	a.StoreFile("f2", []byte("lmao"))
+	a.StoreFile("f1", []byte("lmao"))
+	a.StoreFile("f3", []byte("skrt"))
+
+	f1, _ := a.LoadFile("f1")
+	f2, _ := a.LoadFile("f2")
+	if !reflect.DeepEqual(f1, f2) {
+		t.Error("files diff")
+		return
+	}
+
+	accessToken, _ := a.ShareFile("f1", "bob")
+
+	b.ReceiveFile("bf1", "alice", accessToken)
+	b.StoreFile("bf1", []byte("skrt"))
+	ft, _ := b.LoadFile("bf1")
+	f3, _ := a.LoadFile("f3")
+	if !reflect.DeepEqual(ft, f3) {
+		t.Error("files diff")
+		return
+	}
+	// ft, _ = a.LoadFile("f1")
+	// if !reflect.DeepEqual(ft, f3) {
+	// 	t.Error("files diff")
+	// 	return
+	// }
 
 }
 

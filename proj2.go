@@ -163,12 +163,18 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdata.UnhashedStoredKey = unhashedStoredKey
 	userdata.Password = password
 	pubKey, privKey, err := userlib.PKEKeyGen()
+	if err != nil {
+		return nil, errors.New("pkey failed for some reason")
+	}
 	userdata.RSAPrivKey = privKey
 	userdata.RSAPubKey = pubKey
 	userdata.FileEncrypt = make(map[string][]byte)
 	userdata.FileHMAC = make(map[string][]byte)
 	userdata.FileLocation = make(map[string]userlib.UUID)
-	userdata.HMAC_Key, _ = userlib.HMACEval(unhashedStoredKey, []byte(password))
+	userdata.HMAC_Key, err = userlib.HMACEval(unhashedStoredKey, []byte(password))
+	if err != nil {
+		return nil, errors.New("hmac failed to return a tag")
+	}
 	id := bytesToUUID(unhashedStoredKey)
 	userdata.UUID = id
 	// salt := []byte("yolo")
@@ -186,8 +192,14 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// uname := bytesToUUID([]byte(username))
 	userdata.Signature = sig
 	marshaledData, err := json.Marshal(userdata)
+	if err != nil {
+		return nil, errors.New("marshal failed")
+	}
 	encrypted_marshal := userlib.SymEnc(unhashedStoredKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaledData))
-	user_data_tag, _ := userlib.HMACEval(unhashedStoredKey, encrypted_marshal)
+	user_data_tag, err := userlib.HMACEval(unhashedStoredKey, encrypted_marshal)
+	if err != nil {
+		return nil, errors.New("hmac failed to return a tag")
+	}
 	hidden_data := append(user_data_tag, encrypted_marshal...)
 	// userlib.KeystoreSet(username+"rsa", pubKey)
 	userlib.KeystoreSet(username, userdata.RSAPubKey)
@@ -226,8 +238,13 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 
 	hmac_tag := hidden_data[:userlib.HashSizeBytes]
 	hidden_user := hidden_data[userlib.HashSizeBytes:]
-
-	probe_hidden_user, _ := userlib.HMACEval(unhashedStoredKey, hidden_user)
+	if len(unhashedStoredKey) != 16 {
+		return nil, errors.New("hmac failed in getuser")
+	}
+	probe_hidden_user, err := userlib.HMACEval(unhashedStoredKey, hidden_user)
+	if err != nil {
+		return nil, errors.New("hmac failed in getuser")
+	}
 	if !userlib.HMACEqual(probe_hidden_user, hmac_tag) {
 		return nil, errors.New("data for user seems to be corrupted")
 	}
@@ -245,8 +262,11 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	var file_data FileNode
 	var file_container File
+	var container_uuid userlib.UUID
 	//TODO: This is a toy implementation.
-
+	if userdata == nil {
+		return errors.New("userdata nil")
+	}
 	file_data.Data = data
 	file_data.Next = bytesToUUID([]byte("nullnullnullnull"))
 
@@ -254,9 +274,12 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	file_enc := userlib.RandomBytes(userlib.AESKeySizeBytes)
 	file_hmac := userlib.Argon2Key([]byte(userdata.Username), []byte(filename), 16)
 	// file_hmac := userlib.Argon2Key(userlib.RandomBytes(userlib.AESKeySizeBytes), userlib.RandomBytes(userlib.AESKeySizeBytes), 16)
-	container_uuid := uuid.New()
-
-	userdata.FileLocation[filename] = container_uuid
+	_, ok := userdata.FileLocation[filename]
+	if !ok {
+		container_uuid = uuid.New()
+		userdata.FileLocation[filename] = container_uuid
+	}
+	container_uuid = userdata.FileLocation[filename]
 
 	file_uuid := uuid.New()
 
@@ -266,17 +289,29 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	userdata.FileEncrypt[filename] = file_enc
 	userdata.FileHMAC[filename] = file_hmac
 
-	marshaled_file, _ := json.Marshal(file_data)
+	marshaled_file, err := json.Marshal(file_data)
+	if err != nil {
+		return errors.New("store file failed marshal")
+	}
 
 	encryptedFile := userlib.SymEnc(file_enc, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaled_file))
-	file_tag, _ := userlib.HMACEval(file_hmac, encryptedFile)
+	file_tag, err := userlib.HMACEval(file_hmac, encryptedFile)
+	if err != nil {
+		return errors.New("store file failed hmac eval")
+	}
 	hidden_file := append(file_tag, encryptedFile...)
 
 	userlib.DatastoreSet(file_uuid, hidden_file)
 
-	mashaled_cont, _ := json.Marshal(file_container)
+	mashaled_cont, err := json.Marshal(file_container)
+	if err != nil {
+		return errors.New("store file failed marshal")
+	}
 	encryptedCont := userlib.SymEnc(file_enc, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(mashaled_cont))
-	cont_tag, _ := userlib.HMACEval(file_hmac, encryptedCont)
+	cont_tag, err := userlib.HMACEval(file_hmac, encryptedCont)
+	if err != nil {
+		return errors.New("store file failed hmac eval")
+	}
 	hidden_cont := append(cont_tag, encryptedCont...)
 
 	// storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
@@ -296,6 +331,9 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	var old_tail FileNode
 	var new_tail FileNode
 
+	if userdata == nil {
+		return errors.New("userdata nil")
+	}
 	hidden_cont, ok := userlib.DatastoreGet(userdata.FileLocation[filename])
 
 	if !ok {
@@ -306,8 +344,15 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	}
 	hmac_tag := hidden_cont[:userlib.HashSizeBytes]
 	hidden_data := hidden_cont[userlib.HashSizeBytes:]
+	if len(userdata.FileHMAC[filename]) != 16 {
+		return errors.New("our probe key a bad length, user corrupted")
+	}
 
-	probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+	probe_hmac, err := userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+
+	if err != nil {
+		return errors.New("probe line failed in appendfile")
+	}
 
 	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
 		return errors.New("Data seems to be corrupted")
@@ -317,42 +362,71 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
 	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_container)
 
-	hidden_tail, _ := userlib.DatastoreGet(file_container.Tail)
+	hidden_tail, v := userlib.DatastoreGet(file_container.Tail)
+	if !v {
+		return errors.New("datastore get failed in append")
+	}
 	if len(hidden_tail) <= userlib.HashSizeBytes {
 		return errors.New("bad data, can't slice getuser")
 	}
 	hmac_tag = hidden_tail[:userlib.HashSizeBytes]
 	hidden_data = hidden_tail[userlib.HashSizeBytes:]
-	probe_hmac, _ = userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+	if len(userdata.FileHMAC[filename]) != 16 {
+		return errors.New("Probe without proper key in load")
+	}
+	probe_hmac, err = userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
 
+	if err != nil {
+		return errors.New("probe line failed in appendfile")
+	}
 	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
 		return errors.New("Thy data seemeth to beith corrupted")
 	}
 
 	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &old_tail)
-
+	if err != nil {
+		return errors.New("unmarshal failed in append")
+	}
 	new_node_uuid := uuid.New()
 
 	old_tail.Next = new_node_uuid
 
-	marshaled_tail, _ := json.Marshal(old_tail)
+	marshaled_tail, err := json.Marshal(old_tail)
+	if err != nil {
+		return errors.New("marshal failed in append")
+	}
 	encrypted_tail := userlib.SymEnc(encKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaled_tail))
-	tail_tag, _ := userlib.HMACEval(userdata.FileHMAC[filename], encrypted_tail)
+	tail_tag, err := userlib.HMACEval(userdata.FileHMAC[filename], encrypted_tail)
+	if err != nil {
+		return errors.New("hmac eval failed in appendfile")
+	}
 	hidden_tail = append(tail_tag, encrypted_tail...)
 	userlib.DatastoreSet(file_container.Tail, hidden_tail)
 
 	file_container.Tail = new_node_uuid
 	new_tail.Data = data
 
-	marshaled_tail, _ = json.Marshal(new_tail)
+	marshaled_tail, err = json.Marshal(new_tail)
+	if err != nil {
+		return errors.New("marshal failed in append")
+	}
 	encrypted_tail = userlib.SymEnc(encKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaled_tail))
-	tail_tag, _ = userlib.HMACEval(userdata.FileHMAC[filename], encrypted_tail)
+	tail_tag, err = userlib.HMACEval(userdata.FileHMAC[filename], encrypted_tail)
+	if err != nil {
+		return errors.New("hmac eval failed in appendfile")
+	}
 	hidden_tail = append(tail_tag, encrypted_tail...)
 	userlib.DatastoreSet(new_node_uuid, hidden_tail)
 
-	marshaled_cont, _ := json.Marshal(file_container)
+	marshaled_cont, err := json.Marshal(file_container)
+	if err != nil {
+		return errors.New("marshal failed in append")
+	}
 	encrypted_cont := userlib.SymEnc(encKey, userlib.RandomBytes(userlib.AESBlockSizeBytes), pad(marshaled_cont))
-	cont_tag, _ := userlib.HMACEval(userdata.FileHMAC[filename], encrypted_cont)
+	cont_tag, err := userlib.HMACEval(userdata.FileHMAC[filename], encrypted_cont)
+	if err != nil {
+		return errors.New("hmac eval failed in appendfile")
+	}
 	hidden_cont = append(cont_tag, encrypted_cont...)
 	userlib.DatastoreSet(userdata.FileLocation[filename], hidden_cont)
 
@@ -365,7 +439,9 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
 	var file_data FileNode
 	var file_container File
-
+	if userdata == nil {
+		return nil, errors.New("userdata nil")
+	}
 	//TODO: This is a toy implementation.
 	hidden_c, ok := userlib.DatastoreGet(userdata.FileLocation[filename])
 	// print(hidden_c)
@@ -378,9 +454,13 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	}
 	hmac_tag := hidden_c[:userlib.HashSizeBytes]
 	hidden_cont := hidden_c[userlib.HashSizeBytes:]
-	println(userdata.FileHMAC[filename])
-	probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_cont)
-
+	if len(userdata.FileHMAC[filename]) != 16 {
+		return nil, errors.New("Probe without proper key in load")
+	}
+	probe_hmac, err := userlib.HMACEval(userdata.FileHMAC[filename], hidden_cont)
+	if err != nil {
+		return nil, errors.New("probing in load failed")
+	}
 	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
 		return nil, errors.New("Data seems to be corrupted")
 	}
@@ -388,7 +468,9 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	encKey := userdata.FileEncrypt[filename]
 
 	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_cont)), &file_container)
-
+	if err != nil {
+		return nil, errors.New("unmarshaling failed")
+	}
 	hidden_file, ok := userlib.DatastoreGet(file_container.Head)
 	if !ok {
 		return nil, errors.New(" bad head yyyy")
@@ -398,14 +480,21 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	}
 	hmac_tag = hidden_file[:userlib.HashSizeBytes]
 	hidden_file = hidden_file[userlib.HashSizeBytes:]
-	probe_hmac, _ = userlib.HMACEval(userdata.FileHMAC[filename], hidden_file)
-
+	if len(userdata.FileHMAC[filename]) != 16 {
+		return nil, errors.New("Probe without proper key in load")
+	}
+	probe_hmac, err = userlib.HMACEval(userdata.FileHMAC[filename], hidden_file)
+	if err != nil {
+		return nil, errors.New("probing in load failed")
+	}
 	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
 		return nil, errors.New("Data seems to be corrupted")
 	}
 
 	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_file)), &file_data)
-
+	if err != nil {
+		return nil, errors.New("unmarshaling failed")
+	}
 	cur_id := file_container.Head
 
 	for cur_id != file_container.Tail {
@@ -413,10 +502,18 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 		if !ok {
 			return nil, errors.New("what are we appending")
 		}
+		if len(hidden_file) <= userlib.HashSizeBytes {
+			return nil, errors.New("bad data, can't slice getuser")
+		}
 		hmac_tag := hidden_file[:userlib.HashSizeBytes]
 		hidden_data := hidden_file[userlib.HashSizeBytes:]
-		probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
-
+		if len(userdata.FileHMAC[filename]) != 16 {
+			return nil, errors.New("Probe without proper key in load")
+		}
+		probe_hmac, err := userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+		if err != nil {
+			return nil, errors.New("probing in load failed")
+		}
 		if !userlib.HMACEqual(hmac_tag, probe_hmac) {
 			return nil, errors.New("Data seems to be corrupted")
 		}
@@ -424,6 +521,9 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 		encKey := userdata.FileEncrypt[filename]
 
 		err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_data)
+		if err != nil {
+			return nil, errors.New("unmarshaling failed")
+		}
 		dataBytes = append(dataBytes, file_data.Data...)
 		cur_id = file_data.Next
 	}
@@ -437,13 +537,21 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	}
 	hmac_tag = hidden_file[:userlib.HashSizeBytes]
 	hidden_data := hidden_file[userlib.HashSizeBytes:]
-	probe_hmac, _ = userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
-
+	if len(userdata.FileHMAC[filename]) != 16 {
+		return nil, errors.New("Probe without proper key in load")
+	}
+	probe_hmac, err = userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
+	if err != nil {
+		return nil, errors.New("probing in load failed")
+	}
 	if !userlib.HMACEqual(hmac_tag, probe_hmac) {
 		return nil, errors.New("Data seems to be corrupted")
 	}
 
 	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_data)
+	if err != nil {
+		return nil, errors.New("unmarshaling failed")
+	}
 	dataBytes = append(dataBytes, file_data.Data...)
 
 	return dataBytes, nil
@@ -457,6 +565,9 @@ func (userdata *User) ShareFile(filename string, recipient string) (accessToken 
 
 	var share_cont shareFile
 	// share_cont.Og = userdata.UUID
+	if userdata == nil {
+		return uuid.New(), errors.New("userdata nil")
+	}
 	share_cont.FileCont = userdata.FileLocation[filename]
 	share_cont.EncKey = userdata.FileEncrypt[filename]
 	share_cont.HmacKey = userdata.FileHMAC[filename]
@@ -474,7 +585,6 @@ func (userdata *User) ShareFile(filename string, recipient string) (accessToken 
 	// I think theres something else we have to remarshal bef
 	sender_sig_key := userdata.Signature
 	marshaled_share, err := json.Marshal(share_cont)
-	println(marshaled_share)
 	if err != nil {
 		return shared_uuid, errors.New("marshal fails")
 	}
@@ -483,7 +593,10 @@ func (userdata *User) ShareFile(filename string, recipient string) (accessToken 
 	if err != nil {
 		return shared_uuid, errors.New("encryption failed")
 	}
-	signed_tag, _ := userlib.DSSign(sender_sig_key, encrypted_share)
+	signed_tag, err := userlib.DSSign(sender_sig_key, encrypted_share)
+	if err != nil {
+		return shared_uuid, errors.New("dssign in share failed")
+	}
 	share_camo := append(signed_tag, encrypted_share...)
 	// println(recipient_pubKey.PubKey.N.String())
 
@@ -497,7 +610,9 @@ func (userdata *User) ShareFile(filename string, recipient string) (accessToken 
 func (userdata *User) ReceiveFile(filename string, sender string,
 	accessToken uuid.UUID) error {
 	var encSharedData shareFile
-
+	if userdata == nil {
+		return errors.New("userdata nil")
+	}
 	hidden_share, ok := userlib.DatastoreGet(accessToken)
 	if !ok {
 		return errors.New("we f'd up")
