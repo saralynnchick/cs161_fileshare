@@ -378,7 +378,7 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	}
 	hmac_tag := hidden_c[:userlib.HashSizeBytes]
 	hidden_cont := hidden_c[userlib.HashSizeBytes:]
-
+	println(userdata.FileHMAC[filename])
 	probe_hmac, _ := userlib.HMACEval(userdata.FileHMAC[filename], hidden_cont)
 
 	if !userlib.HMACEqual(hmac_tag, probe_hmac) {

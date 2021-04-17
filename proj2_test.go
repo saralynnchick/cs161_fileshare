@@ -64,6 +64,82 @@ func TestGetUser(t *testing.T) {
 		return
 	}
 }
+
+func TestSomeMoreShares(t *testing.T) {
+	clear()
+	u1, err := InitUser("u1", "a")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	u2, err := InitUser("u2", "b")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	u3, err := InitUser("u3", "c")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	u4, err := InitUser("u4", "d")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	u1.StoreFile("f1", []byte("test shit"))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	token, err := u1.ShareFile("f1", "u2")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	err = u2.ReceiveFile("u2-f1", "u1", token)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	token, err = u2.ShareFile("u2-f1", "u3")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	err = u3.ReceiveFile("u3-f1", "u2", token)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	token, err = u3.ShareFile("u3-f1", "u4")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	err = u4.ReceiveFile("u4-f1", "u3", token)
+	f1, err := u1.LoadFile("f1")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	f4, err := u4.LoadFile("u4-f1")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	if !reflect.DeepEqual(f1, f4) {
+		t.Error("files didn't match")
+		return
+	}
+}
+
 func TestStorage(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")
