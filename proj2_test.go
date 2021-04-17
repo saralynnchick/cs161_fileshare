@@ -140,6 +140,25 @@ func TestInvalidFile(t *testing.T) {
 	}
 }
 
+func TestInvalidateDataStore(t *testing.T) {
+	clear()
+	// valid := true
+	ds := userlib.DatastoreGetMap()
+	a, err := InitUser("al", "pw")
+	if err != nil {
+		t.Error("we messed up init")
+	}
+	a.StoreFile("file1", []byte("yoyoyo"))
+	for key, _ := range ds {
+		ds[key] = []byte("lol bruh")
+	}
+
+	_, err = a.LoadFile("file1")
+	if err == nil {
+		t.Error("we should have failed mate")
+	}
+}
+
 func TestShare(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")

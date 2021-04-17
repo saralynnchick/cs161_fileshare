@@ -252,7 +252,8 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	// _, exists := userdata.FileLocation[filename]
 	file_enc := userlib.RandomBytes(userlib.AESKeySizeBytes)
-	file_hmac := userlib.Argon2Key(userlib.RandomBytes(userlib.AESKeySizeBytes), userlib.RandomBytes(userlib.AESKeySizeBytes), 16)
+	file_hmac := userlib.Argon2Key([]byte(userdata.Username), []byte(filename), 16)
+	// file_hmac := userlib.Argon2Key(userlib.RandomBytes(userlib.AESKeySizeBytes), userlib.RandomBytes(userlib.AESKeySizeBytes), 16)
 	container_uuid := uuid.New()
 
 	userdata.FileLocation[filename] = container_uuid
@@ -317,6 +318,9 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	err = json.Unmarshal(depad(userlib.SymDec(encKey, hidden_data)), &file_container)
 
 	hidden_tail, _ := userlib.DatastoreGet(file_container.Tail)
+	if len(hidden_tail) <= userlib.HashSizeBytes {
+		return errors.New("bad data, can't slice getuser")
+	}
 	hmac_tag = hidden_tail[:userlib.HashSizeBytes]
 	hidden_data = hidden_tail[userlib.HashSizeBytes:]
 	probe_hmac, _ = userlib.HMACEval(userdata.FileHMAC[filename], hidden_data)
