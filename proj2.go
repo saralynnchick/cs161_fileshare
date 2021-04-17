@@ -220,6 +220,10 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, errors.New("Bad password username combo")
 	}
 
+	if len(hidden_data) <= userlib.HashSizeBytes {
+		return nil, errors.New("bad data, can't slice getuser")
+	}
+
 	hmac_tag := hidden_data[:userlib.HashSizeBytes]
 	hidden_user := hidden_data[userlib.HashSizeBytes:]
 
@@ -296,6 +300,9 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	if !ok {
 		return errors.New("what are we appending")
 	}
+	if len(hidden_cont) <= userlib.HashSizeBytes {
+		return errors.New("bad data, can't slice getuser")
+	}
 	hmac_tag := hidden_cont[:userlib.HashSizeBytes]
 	hidden_data := hidden_cont[userlib.HashSizeBytes:]
 
@@ -362,7 +369,9 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	if !ok {
 		return nil, errors.New("The filename doesn't exist for this user")
 	}
-
+	if len(hidden_c) <= userlib.HashSizeBytes {
+		return nil, errors.New("bad data, can't slice getuser")
+	}
 	hmac_tag := hidden_c[:userlib.HashSizeBytes]
 	hidden_cont := hidden_c[userlib.HashSizeBytes:]
 
@@ -379,6 +388,9 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	hidden_file, ok := userlib.DatastoreGet(file_container.Head)
 	if !ok {
 		return nil, errors.New(" bad head yyyy")
+	}
+	if len(hidden_file) <= userlib.HashSizeBytes {
+		return nil, errors.New("bad data, can't slice getuser")
 	}
 	hmac_tag = hidden_file[:userlib.HashSizeBytes]
 	hidden_file = hidden_file[userlib.HashSizeBytes:]
@@ -415,6 +427,9 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	hidden_file, ok = userlib.DatastoreGet(cur_id)
 	if !ok {
 		return nil, errors.New("what are we appending")
+	}
+	if len(hidden_file) <= userlib.HashSizeBytes {
+		return nil, errors.New("bad data, can't slice getuser")
 	}
 	hmac_tag = hidden_file[:userlib.HashSizeBytes]
 	hidden_data := hidden_file[userlib.HashSizeBytes:]
@@ -488,6 +503,9 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 		return errors.New("we f'd up pt.2 with getting sender key")
 	}
 	//verify the file and decrypt
+	if len(hidden_share) <= 256 {
+		return errors.New("bad data, can't slice getuser")
+	}
 	sign_tag := hidden_share[:256]
 	encrypted_data := hidden_share[256:]
 	// print(encrypted_data)
